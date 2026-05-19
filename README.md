@@ -1,310 +1,561 @@
-# Assignment 11: A Simple Group Chat Server with Fuzzing Clients
+# Quantum Walkie Talkie
 
-In this assignment, you will write a simple group chat server program and a client program. The
-server will accept multiple clients and relay client messages back to the clients. Each client, on
-the other hand, will be a fuzzer generating messages and sending and receiving those messages to and
-from the server.
+A Python-based simulation of a **quantum-secure communication system** inspired by the **BB84 Quantum Key Distribution (QKD)** protocol using the Qiskit framework.
 
-## Group Chat Server
+This project demonstrates how two users can securely establish a shared secret encryption key through quantum principles and then use that key to encrypt and decrypt messages using XOR-based symmetric encryption.
 
-The group chat server accepts client connections, receives client messages, and echoes those
-messages back to all clients. The following are the requirements of the server.
+---
 
-* The command-line interface should be able to start the server as follows.
+# Project Overview
 
-  ```bash
-  $ ./server <port number> <# of clients>
-  ```
+Traditional communication systems rely on mathematical complexity for security. Quantum communication instead relies on the laws of quantum mechanics.
 
-* The executable of your server should be named `server`.
-* The server should bind to port `port number`.
-* `<# of clients>` is the expected number of clients.
-    * A client can join any time and leave any time.
-    * You do not need to handle cases where this number is just too big and our container cannot
-      handle that many clients. We will not test with more than 100 clients.
-* The server should use `AF_INET`.
-* The server should bind to all available IP addresses for the local host.
-* The server should receive all messages from each and every client as they send them.
-* When the server receives a message from a client, it should send the message to *all* clients,
-  *including* the sender.
-* Message ordering
-    * When a client sends multiple messages, all clients should receive the messages in the original
-      sending order.
-    * In addition, all clients should receive all messages in the same order.
-        * For example, suppose we have three clients, C0, C1, and C2.
-        * Consider the following scenario.
-            * C0 sends a message, M0, which is received by the server.
-            * C1 then sends a message, M1, which is also received by the server.
-            * Lastly, C2 sends a message, M2, which is again received by the server.
-        * Based on the above scenario, C0, C1, and C2 should all receive M0 first, M1 next, and then
-          M2.
-    * This message ordering is not a trick requirement. It is just what you expect from a group chat
-      room.
-* Note: the simplest way to test a server is to use `telnet <IP> <port>`.
-    * Suppose your local IP address is `192.168.68.6` and you run the server, which binds to port
-      `8000`.
-    * `telnet 192.168.68.6 8000` will act as a client connected to the server.
-    * `127.0.0.1` is a local IP address that refers to the local machine, so `telnet 127.0.0.1 8000`
-      will also work.
-    * `localhost` is a host name that refers to the local machine, so `telnet localhost 8000` works
-      as well.
-    * You can enter messages on your terminal as a standard input to `telnet` and they will be sent
-      to the server.
+This project simulates a simplified quantum communication protocol where:
 
-## Messaging Protocol
+1. A sender generates random bits and random quantum bases.
+2. A receiver independently chooses random measurement bases.
+3. Qubits are encoded and measured using Qiskit quantum circuits.
+4. Matching bases are used to establish a shared secret key.
+5. The shared key is used for message encryption and decryption.
 
-The following is how the server and the clients should format and interpret messages they send and
-receive.
+The system behaves similarly to a secure “walkie talkie” where both parties communicate using a quantum-generated secret key.
 
-* For clarity, we use two terms---a *group chat message* and a *message*.
-    * A *group chat message* refers to what we would normally call a "message" in the context of a
-      group chat app.
-    * A *message* is a piece of data sent by a client or a server through a socket. As described
-      below, this may or may not contain a group chat message.
-* The message size should be no more than 1024 bytes.
-* Both for the server side and the client side, a message should always start with a one-byte
-  (`uint8_t`) "type."
-    * `0` means that it is a regular message that contains a group chat message.
-        * We refer to this as a type `0` message.
-    * `1` means that it is a special "end of execution" message.
-        * [Two-Phase Commit Protocol](#two-phase-commit-protocol) below fully explains this.
-        * We refer to this as a type `1` message.
-* Both for the server and the clients, a new line character `'\n'` always marks the end of a
-  message.
-    * This means that when you send out a message, it's best to make sure you send up to `'\n'`. If
-      you blindly send out `x` bytes since that is the size of your buffer, you will have a hard
-      time making things work. The same goes for receiving a message. It's best to make sure that
-      you receive up to `'\n'` and handle the message.
-    * In addition, you need to be careful with other aspects of this due to the requirement
-      described next.
-* When the server receives a type `0` message from a client, the server should get the *sender's*
-  address (IP and port) and include the address in the message sent to all clients.
-    * Consider a typical group chat app. When a client sends a group chat message, everyone should
-      know who sent it. We achieve this by having the server add the sender's address to each group
-      chat message.
-    * The IP address should be of type `uint32_t`. It should come after the first byte that
-      indicates the type (`0`).
-    * The port number should be of type `uint16_t`. It should come after the IP address.
-    * Note that only the server performs this address inclusion. A client does not do this.
-    * Also note that the address and the port number are numbers, `uint32_t` and `uint16_t`,
-      respectively. They are not strings. This means that those numbers can contain a byte value
-      that is `'\n'`, which, in our protocol, indicates the end of a message. You need to be careful
-      with this when you send and receive messages.
-* In summary, when the server receives a message from a client, it should interpret the first 1 byte
-  as the type. If it is `0`, then the server should interpret the rest of the message as a group
-  chat message until it reads `'\n'`.
-    * If it is `1`, the server should follow the description in [Two-Phase Commit
-      Protocol](#two-phase-commit-protocol) below.
-* Similarly, when a client receives a message from the server, it should interpret the first 1 byte
-  as the type. If it is `0`, then the client should interpret the next 4 bytes as the original
-  sender's IP address, the next 2 bytes as the original sender's port number, and the rest as a
-  group chat message until it reads `'\n'`.
-    * If it is `1`, the client should follow the description in [Two-Phase Commit
-      Protocol](#two-phase-commit-protocol) below.
+---
 
-## Fuzzing Clients
+# Features
 
-The client program is a simple custom fuzzer that generates messages and sends those messages to the
-server. It also receives messages sent by the server. It is a custom fuzzer in the sense that it
-does not use a fuzzing framework such as [libFuzzer](https://llvm.org/docs/LibFuzzer.html) discussed
-in A5. The following are the requirements.
+* BB84-style Quantum Key Distribution simulation
+* Random quantum bit generation
+* Quantum basis encoding and measurement
+* Shared key establishment between sender and receiver
+* XOR-based encryption and decryption
+* Qiskit Aer simulator integration
+* Iterative key generation until target key length is reached
+* End-to-end communication testing
 
-* The command-line interface should be able to start a client as follows.
+---
 
-  ```bash
-  $ ./client <IP address> <port number> <# of messages> <log file path>
-  ```
+# Technologies Used
 
-* The executable should be named `client`.
-* `IP` and `port` are the IP address and the port number of the server, respectively.
-* A client should follow the above [message protocol](#messaging-protocol) when sending and
-  receiving messages.
-* After it starts, a client should keep generating and sending random messages. `<# of messages>`
-  should be the number of messages sent.
-    * The random messages should be of type `0`.
-    * After sending `<# of messages>` messages, the client should stop sending type `0` messages,
-      and prepare for termination as described below in [Two-Phase Commit
-      Protocol](#two-phase-commit-protocol).
-    * You can use `getentropy()` to generate random bytes. Read `man getentropy` to understand how
-      to use it.
-    * Since `getentropy()` gives you random bytes that you may not be able to print out, use the
-      following function to convert it to a hex string.
+## Programming Language
 
-      ```c
-      #include <stdint.h>
-      #include <stdio.h>
-      #include <unistd.h>
+* Python 3
 
-      /*
-       * `buf` should point to an array that contains random bytes to convert to a
-       * hex string.
-       *
-       * `str` should point to a buffer used to return the hex string of the random
-       * bytes. The size of the buffer should be twice the size of the random bytes
-       * (since a byte is two characters in hex) plus one for NULL.
-       *
-       * `size` is the size of the `str` buffer.
-       *
-       * For example,
-       *
-       *   uint8_t buf[10];
-       *   char str[10 * 2 + 1];
-       *   getentropy(buf, 10);
-       *   if (convert(buf, sizeof(buf), str, sizeof(str)) != 0) {
-       *     exit(EXIT_FAILURE);
-       *   }
-       */
-      int convert(uint8_t *buf, ssize_t buf_size, char *str, ssize_t str_size) {
-        if (buf == NULL || str == NULL || buf_size <= 0 ||
-            str_size < (buf_size * 2 + 1)) {
-          return -1;
-        }
+## Libraries
 
-        for (int i = 0; i < buf_size; i++)
-          sprintf(str + i * 2, "%02X", buf[i]);
-        str[buf_size * 2] = '\0';
+* Qiskit
+* Qiskit Aer
+* Random
 
-        return 0;
-      }
-      ```
+---
 
-* A client should print out each and every type `0` message it receives from the server and store
-  them in a file named `<log file path>`.
-    * Use this format: `"%-15s%-10u%s"`, e.g., `printf("%-15s%-10u%s", ip, port, str);`
-    * For example, `192.267.128.205     9000      9391DE3E275ADB19637D`
-    * Make sure you print out one message per line. Adjust the format string accordingly regarding
-      the new line character.
-* Note that a client should be able to send messages and receive messages concurrently.
+# Project Structure
 
-## Two-Phase Commit Protocol
+```text
+Quantum-Walkie-Talkie-main/
+│
+├── Project.py          # Main implementation of the quantum communication protocol
+├── Tester.py           # Test script for running and validating the system
+├── Report Code.pdf     # Supporting project documentation/report
+└── README.md           # Project documentation
+```
 
-To gracefully end the execution for both the server and the clients, the server and the clients
-should collectively implement a simplified [two-phase commit
-protocol](https://en.wikipedia.org/wiki/Two-phase_commit_protocol) signaling the end of execution as
-follows.
+---
 
-* After sending `# of messages` messages, each client should send a type `1` message to the server
-  (as opposed to a type `0` message described in [Message Protocol](#messaging-protocol)). This is
-  to indicate that the client is done sending messages.
-* After the server receives a type `1` message from each and every client, it should send a type `1`
-  message to all clients. It should then terminate itself.
-* Each client should terminate after receiving a type `1` message from the server.
+# How the System Works
 
-## Code Structure and CMake
+## 1. Random Bit Generation
 
-* You need to use the same code structure as previous assignments with `src/` and `include/`.
-* You also need to write `CMakeLists.txt` that produces two executables, `server` and `client`. **Be
-  very careful about file names and capitalization**. If they are not exactly what we expect, it
-  will result in a 0.
+The sender generates:
 
-## Grading
+* Random message bits
+* Random encoding bases
 
-* **Our base grading does not use the debug option or sanitizers.** Therefore, your code should
-  function correctly without them.
-* You can use `server-tester.<arch>` and `client-tester.<arch>` under `bin/` to test your program.
-  If you're using an x86-64 Docker, use `server-tester.amd64` and `client-tester.amd64`. If you are
-  using an ARM64 Docker, use `server-tester.arm64` and `client-tester.arm64`. These executables are
-  essentially the same as the ones we use for grading, though they may not be exactly the same.
-  Below, we will generally refer to them as `server-tester` and `client-tester`.
-* You *should not* use these executables as debuggers. They do not tell you what the problems are.
-  They do provide some error messages but those are not intended to serve as debug messages. They
-  mostly just provide only a simple pass/fail result.
-* When a test case does not pass, you need to construct the same scenario and debug your program to
-  find the problems.
-* Testing your server program: `server-tester` is the program that tests your server program. The
-  following is how you run the program.
+The receiver generates:
 
-  ```bash
-  $ ./server-tester <IP address> <port number> <# of clients> <# of messages> <test #>
-  ```
+* Random measurement bases
 
-    * You need to run your server program first before running `server-tester`.
-    * `IP address` and `port number` are the IP address and the port number of the server,
-      respectively.
-    * `<# of messages>` is the number of messages sent by each client. Some tests may ignore this
-      argument as they do not need more than one message.
-    * `<# of clients>` is the number of clients that start. Some tests may ignore this argument as
-      they do not need more than one client.
-    * `<test #>` is the test number. The following are the test numbers and their descriptions.
-        * `0` [5 pts]: One client sends one type `0` message and receives some message back.
-        * `1` [10 pts]: One client sends one type `0` message and receives the server's response
-          message back in the correct format (i.e., according to the protocol with 0, IP, port, and
-          chat message).
-        * `2` [10 pts]: One client keeps sending type `0` messages and receives those messages back
-          in the correct format and in the original sending order. We will test this with a large `#
-          of messages` (e.g., 1000).
-        * `3` [5 pts]: One client sends one type `1` message and receives one type `1` message back
-          from the server. The server terminates.
-        * `4` [10 pts]: Many clients each send one type `0` message and receive all the messages
-          back in the correct format and in the same order. We will test this with a large `# of
-          clients` (e.g., 100).
-        * `5` [15 pts]: Many clients each keep sending messages and receiving all the messages back
-          in the correct format and in the same order. We will test this with a large `# of clients`
-          and a large `# of messages` (e.g., 100 clients and 100 messages each).
-        * `6` [5 pts]: Many clients each send one type `1` message and all receive one type `1`
-          message back from the server. The server terminates.
-    * The executable prints out logs as it runs.
-        * You can change the log level by adding `LOG_LEVEL=<number>` to the command, e.g.,
-          `LOG_LEVEL=0 ./server-tester ...`.
-        * The log levels range from 0 to 3. 0 is the most verbose, 3 the least.
-        * The default log level is 1.
-        * When testing and debugging, you will want to use the log level 0 to get more information
-          about the execution.
-        * Our grader uses the default log level. Thus, you need to make sure that your submission
-          works with the default log level.
-        * Note that the log level 0 will print out *a lot* of messages. It is better to redirect it
-          to a file (e.g., `LOG_LEVEL=0 ./server-tester ... > test.log 2>&1` and examine the file
-          after the execution.
-* Testing your client program: `client-tester` is the program that tests your client program. The
-  following is how you run the program.
+Example:
 
-  ```bash
-  $ ./client-tester <client executable path> <client log prefix> <port number> <# of clients> <# of messages> <test #>
-  ```
+```python
+sender_bits = [1,0,1,1]
+sender_bases = [0,1,1,0]
+receiver_bases = [0,1,0,0]
+```
 
-    * This is essentially a server but it also executes your client. Thus, the output of your client
-      program will be printed out on the terminal, along with the output of the program.
-    * `<client file path>` is the path to your client executable.
-    * `<client log prefix>` is the prefix of the log file that your client program generates. The
-      program will append the client number to the prefix to create the log file name.
-    * `port number` is the port number that `client-tester` binds to.
-    * `<# of clients>` is the number of clients that you want to start. Some tests may ignore this
-      argument as they do not need more than one client.
-    * `<# of messages>` is the number of messages sent by each client. Some tests may ignore this as
-      they do not need more than one message.
-    * `<test #>` is the test number. The following are the test numbers and their descriptions.
-        * `0` [5 pts]: After a single client starts, the server receives at least one type `0`
-          message and the client prints the message out correctly.
-        * `1` [10 pts]: After a single client starts, the server receives `<# of messages>` random
-          type `0` messages and the client prints out all messages correctly.
-        * `2` [5 pts]: After a single client sends `<# of messages>` messages, the server receives
-          one type `1` message and sends it back. The client terminates.
-        * `3` [15 pts]: After many clients start, the server keeps receiving type `0` messages and
-          the clients print out all messages correctly.
-        * `4` [5 pts]: After receiving `<# of messages>` from each and every client, the server
-          receives one type `1` message from them and sends it back. All clients terminate.
-    * The executable prints out logs as it runs.
-        * You can change the log level by adding `LOG_LEVEL=<number>` to the command, e.g.,
-          `LOG_LEVEL=0 ./server-tester ...`.
-        * The log levels range from 0 to 3. 0 is the most verbose, 3 the least.
-        * The default log level is 1.
-        * When testing and debugging, you will want to use the log level 0 to get more information
-          about the execution.
-        * Our grader uses the default log level. Thus, you need to make sure that your submission
-          works with the default log level.
-        * Note that the log level 0 will print out *a lot* of messages. It is better to redirect it
-          to a file (e.g., `LOG_LEVEL=0 ./client-tester ... > test.log 2>&1` and examine the file
-          after the execution.
-* Occasionally, and especially before you submit, make sure that you run the minimum checker, which
-  is already installed in your Docker container (`minimum_checker`). Please don't forget to run it
-  from the top directory. As with previous assignments, it performs basic checks (e.g., `.record`,
-  `.nvim`, copy-and-paste, etc.). If this does not pass, you will receive a 0.
-* Code that does not compile with CMake gets a 0.
-* Code that does not generate all the required executables (`client` and `server`) gets a 0.
-* Memory issues have a penalty of -10 pts. Use appropriate sanitizers and enable the debug option.
-  Make sure your code works without the debug option as well. Before you submit, make sure that you
-  remove the debug option.
-* A wrong code directory structure has a penalty of -10 pts.
-* Thread/synchronization issues have a penalty of -10 pts.
-* You should not hard-code or customize your implementation tailored to our test cases. Generally,
-  you should consider the provided test cases as examples or specific instances of general cases.
+Where:
+
+* `0` represents the standard computational basis
+* `1` represents the Hadamard basis
+
+---
+
+# 2. Quantum Circuit Creation
+
+A quantum circuit is created using Qiskit.
+
+```python
+QuantumCircuit(2,1)
+```
+
+The circuit contains:
+
+* 2 qubits
+* 1 classical bit
+
+---
+
+# 3. Sender Encoding
+
+The sender encodes each bit into a qubit.
+
+## Encoding Rules
+
+### If bit = 1
+
+Apply an X gate:
+
+```python
+circuit.x(qubit)
+```
+
+### If basis = 1
+
+Apply a Hadamard gate:
+
+```python
+circuit.h(qubit)
+```
+
+This converts the qubit into the diagonal basis.
+
+---
+
+# 4. Receiver Measurement
+
+The receiver measures the qubit using a randomly chosen basis.
+
+If the receiver chooses the Hadamard basis:
+
+```python
+circuit.h(qubit)
+```
+
+Then the qubit is measured:
+
+```python
+circuit.measure(qubit, classical_bit)
+```
+
+---
+
+# 5. Key Sifting
+
+After transmission:
+
+* Sender and receiver compare their chosen bases.
+* Only positions where the bases match are kept.
+* Matching bits form the shared secret key.
+
+Example:
+
+| Index | Sender Basis | Receiver Basis | Keep? |
+| ----- | ------------ | -------------- | ----- |
+| 0     | 0            | 0              | Yes   |
+| 1     | 1            | 1              | Yes   |
+| 2     | 0            | 1              | No    |
+| 3     | 1            | 0              | No    |
+
+Only matching positions contribute to the final key.
+
+---
+
+# 6. Encryption
+
+The message is encrypted using XOR.
+
+## Formula
+
+```text
+Encrypted Bit = Message Bit XOR Key Bit
+```
+
+## Implementation
+
+```python
+return [m ^ k for m, k in zip(message_bits, key_bits)]
+```
+
+---
+
+# 7. Decryption
+
+Decryption uses the same XOR operation.
+
+```text
+Original Message = Encrypted Bit XOR Key Bit
+```
+
+## Implementation
+
+```python
+return [e ^ k for e, k in zip(encrypted_bits, key_bits)]
+```
+
+Since XOR is reversible:
+
+```text
+(A XOR B) XOR B = A
+```
+
+The original message is recovered successfully.
+
+---
+
+# Main Classes and Functions
+
+# QuantumWalkieTalkie Class
+
+Located in:
+
+```text
+Project.py
+```
+
+This class manages the entire quantum communication workflow.
+
+---
+
+## Constructor
+
+```python
+__init__(self, bitlength=256)
+```
+
+Initializes:
+
+* Key length
+* Qiskit backend simulator
+
+---
+
+## generate_randomBitString()
+
+```python
+generate_randomBitString(length)
+```
+
+Generates random binary sequences.
+
+### Example Output
+
+```python
+[1,0,1,1,0,0,1]
+```
+
+---
+
+## create_circuit()
+
+```python
+create_circuit()
+```
+
+Creates a fresh quantum circuit.
+
+---
+
+## encode_sender_bit()
+
+```python
+encode_sender_bit(circuit, bit, basis)
+```
+
+Encodes a bit into a qubit using:
+
+* X gate
+* Hadamard gate
+
+---
+
+## encode_receiver_basis()
+
+```python
+encode_receiver_basis(circuit, basis)
+```
+
+Applies measurement basis selection and performs measurement.
+
+---
+
+## encryption()
+
+```python
+encryption(message_bits, key_bits)
+```
+
+Encrypts the message using XOR.
+
+---
+
+## decryption()
+
+```python
+decryption(encrypted_bits, key_bits)
+```
+
+Decrypts the encrypted message.
+
+---
+
+## run_key_exchange_iterative()
+
+```python
+run_key_exchange_iterative(target_key_length, batch_size)
+```
+
+Core implementation of the BB84-style key exchange.
+
+### Responsibilities
+
+* Generates random sender and receiver bases
+* Runs quantum simulations
+* Measures qubits
+* Filters matching bases
+* Builds final shared key
+* Verifies sender and receiver keys match
+
+---
+
+# Example Execution Flow
+
+## Step 1
+
+Generate a random message.
+
+```python
+message = [0,1,1,0,1]
+```
+
+## Step 2
+
+Run quantum key exchange.
+
+```python
+key_sender, key_receiver = qwt.run_key_exchange_iterative()
+```
+
+## Step 3
+
+Encrypt the message.
+
+```python
+encrypted = qwt.encryption(message, key)
+```
+
+## Step 4
+
+Decrypt the message.
+
+```python
+decrypted = qwt.decryption(encrypted, key)
+```
+
+## Step 5
+
+Verify correctness.
+
+```python
+assert decrypted == message
+```
+
+---
+
+# Running the Project
+
+## 1. Clone the Repository
+
+```bash
+git clone <repository-url>
+cd Quantum-Walkie-Talkie-main
+```
+
+---
+
+## 2. Install Dependencies
+
+Install Qiskit and Aer:
+
+```bash
+pip install qiskit qiskit-aer
+```
+
+---
+
+## 3. Run the Test Program
+
+```bash
+python Tester.py
+```
+
+---
+
+# Example Output
+
+```text
+Starting BB84-style key exchange...
+
+---------- Iteration 1 ----------
+Matched indices: [0, 2, 5]
+Sender bits    : [1, 0, 1]
+Receiver bits  : [1, 0, 1]
+
+Shared key established successfully!
+
+Shared Key: [1,0,1,1,...]
+Message   : [0,1,1,0,...]
+Encrypted : [1,1,0,1,...]
+Decrypted : [0,1,1,0,...]
+
+Success: Decrypted message matches original.
+```
+
+---
+
+# Quantum Computing Concepts Used
+
+## Qubit
+
+A qubit is the quantum version of a classical bit.
+
+Unlike classical bits:
+
+* Classical bit → either 0 or 1
+* Qubit → can exist in superposition
+
+---
+
+## Superposition
+
+Using the Hadamard gate:
+
+```text
+|0⟩ → (|0⟩ + |1⟩)/√2
+```
+
+This allows quantum states to exist probabilistically.
+
+---
+
+## Quantum Measurement
+
+Measuring a qubit collapses its state into either:
+
+* 0
+* 1
+
+The result depends on the chosen measurement basis.
+
+---
+
+## BB84 Protocol
+
+The BB84 protocol is one of the first quantum key distribution protocols.
+
+It ensures:
+
+* Secure key sharing
+* Detection of eavesdropping
+* Quantum-safe communication
+
+This project implements a simplified simulation inspired by BB84.
+
+---
+
+# Security Perspective
+
+This project demonstrates an important concept:
+
+If an attacker measures a quantum state incorrectly:
+
+* The state changes
+* Errors are introduced
+* Eavesdropping can potentially be detected
+
+This is a major advantage of quantum cryptography compared to classical encryption.
+
+---
+
+# Limitations
+
+This project is a simulation and not a production-ready quantum communication system.
+
+Current limitations include:
+
+* No real quantum hardware transmission
+* No noise modeling
+* No eavesdropper simulation
+* No privacy amplification
+* No error correction layer
+* Uses classical XOR encryption after key generation
+
+---
+
+# Possible Future Improvements
+
+Potential enhancements include:
+
+* Add Eve (eavesdropper) simulation
+* Implement error correction
+* Add privacy amplification
+* Support real IBM Quantum hardware
+* Add GUI interface
+* Real-time visualization of qubits
+* Secure chat interface
+* Networked communication between devices
+* Noise and decoherence modeling
+* Performance benchmarking
+
+---
+
+# Educational Value
+
+This project is useful for learning:
+
+* Quantum computing basics
+* Quantum cryptography
+* Qiskit programming
+* BB84 protocol mechanics
+* Quantum circuit simulation
+* Secure communication concepts
+
+It is suitable for:
+
+* Computer science students
+* Cybersecurity students
+* Quantum computing beginners
+* Research demonstrations
+* Academic projects
+
+---
+
+# Dependencies
+
+## Python Packages
+
+```text
+qiskit
+qiskit-aer
+```
+
+---
+
+# Author
+
+Developed as a quantum communication simulation project using Python and Qiskit.
+
+---
+
+# License
+
+This project is intended for educational and research purposes.
